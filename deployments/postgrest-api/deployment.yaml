@@ -1,5 +1,3 @@
-
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,17 +39,3 @@ spec:
             value: "web_anon"
           - name: PGRST_DB_SCHEMAS
             value: "public" 
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: postgrest-service
-  namespace: api-auth
-spec:
-  selector:
-    app: postgrest
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 3000
-  type: ClusterIP
