@@ -6,7 +6,7 @@ metadata:
   labels:
     app: postgrest
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: postgrest
@@ -15,11 +15,34 @@ spec:
       labels:
         app: postgrest
     spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: postgrest
+              topologyKey: "topology.kubernetes.io/zone"
       containers:
       - name: postgrest
         image: postgrest/postgrest:latest
         ports:
         - containerPort: 3000
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 3000 
+          initialDelaySeconds: 10 
+          periodSeconds: 15       
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 20
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
         env:
           - name: PGRST_DB_URI
             valueFrom:
