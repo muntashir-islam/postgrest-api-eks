@@ -21,7 +21,7 @@ spec:
             - labelSelector:
                 matchLabels:
                   app: postgrest
-              topologyKey: "topology.kubernetes.io/zone"
+              topologyKey: "kubernetes.io/hostname"
       containers:
       - name: postgrest
         image: postgrest/postgrest:latest
