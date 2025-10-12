@@ -1,0 +1,5 @@
+name             = "compliance-vpc-endpoint"
+vpc              = { id = "vpc-0e54657f7c6aa29b5" }
+endpoint_service = "com.amazonaws.__REGION__.ssm"
+endpoint_type    = "interface"
+allowed_subnets  = [ {id = "subnet-0e54657f7c6aa29b5"}, {id = "0e54657f7c6aa29b5"}]

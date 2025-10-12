@@ -1,0 +1,57 @@
+
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgrest-api
+  namespace: api-auth
+  labels:
+    app: postgrest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgrest
+  template:
+    metadata:
+      labels:
+        app: postgrest
+    spec:
+      containers:
+      - name: postgrest
+        image: postgrest/postgrest:latest
+        ports:
+        - containerPort: 3000
+        env:
+          - name: PGRST_DB_URI
+            valueFrom:
+              secretKeyRef:
+                name: postgrest-secret-vault
+                key: db-uri
+          - name: PGRST_JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: postgrest-secret-vault
+                key: jwt-secret
+          - name: PGRST_JWT_ROLE_CLAIM_KEY # Keycloak role path from the article
+            value: ".resource_access.postgrest_api.roles[0]"
+          - name: PGRST_DB_AUTHENTICATOR_ROLE
+            value: "authenticator"
+          - name: PGRST_DB_ANON_ROLE
+            value: "web_anon"
+          - name: PGRST_DB_SCHEMAS
+            value: "public" 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgrest-service
+  namespace: api-auth
+spec:
+  selector:
+    app: postgrest
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: ClusterIP

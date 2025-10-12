@@ -1,0 +1,19 @@
+eni:
+  enabled: true
+ipam:
+  mode: eni
+egressMasqueradeInterfaces: eth0
+k8sServiceHost: 07FE594C0E10B9EB78519B05B4E651D2.gr7.us-east-1.eks.amazonaws.com
+k8sServicePort: 443
+kubeProxyReplacement: true
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+      - matchExpressions:
+        # This is to limit cilium only running on the nodes
+        # WITHOUT label cni-plugin=aws
+        - key: cni-plugin
+          operator: NotIn
+          values:
+          - aws

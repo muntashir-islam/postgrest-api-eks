@@ -1,0 +1,23 @@
+server:
+  # Use the File storage backend for persistent data
+  standalone:
+    enabled: true
+
+  # Persistence settings
+  dataStorage:
+    enabled: true
+    # Requests 1GB of persistent storage
+    size: 1Gi
+    storageClass: "gp2" # Replace with your cluster's StorageClass if needed
+
+  # Service type to expose the UI/API
+  service:
+    type: ClusterIP
+
+  # UI settings
+  ui:
+    enabled: true
+    serviceType: ClusterIP
+injector:
+  enabled: true
+  replicas: 1

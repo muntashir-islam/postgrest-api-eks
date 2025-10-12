@@ -1,0 +1,3 @@
+name = "compliance-test-nat"
+subnet = {"compliance-test-subnet" = {id = "subnet-00000000000000000" }}
+route_tables = {"compliance-test-rtb" = {id = "rtb-00000000000000000" }}

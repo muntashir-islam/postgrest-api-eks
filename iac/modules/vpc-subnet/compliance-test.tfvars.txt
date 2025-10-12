@@ -1,0 +1,16 @@
+name = "compliance-test"
+vpc  = { id = "vpc-00000000000000000" }
+ipv4_gw = true
+ipv6_gw = true
+subnet_definitions = [
+  {
+    ipv4_cidr = "10.10.0.0/24"
+    az = "us-east-1a"
+  },{
+    ipv4_cidr = "10.10.1.0/24"
+    az = "us-east-1b"
+  },{
+    ipv4_cidr = "10.10.2.0/24"
+    az = "us-east-1c"
+  }
+]

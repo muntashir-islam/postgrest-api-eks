@@ -1,0 +1,44 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-keycloak
+  namespace: keycloak
+spec: 
+  acme: 
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: islam.muntashir@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-keycloak
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak-ingress
+  namespace: keycloak
+  annotations:
+    cert-manager.io/issuer: letsencrypt-keycloak
+    cert-manager.io/acme-challenge-type: http01
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/allow-headers: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: auth.muntashirislam.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: keycloak
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - auth.muntashirislam.com
+      secretName: keycloak-tls

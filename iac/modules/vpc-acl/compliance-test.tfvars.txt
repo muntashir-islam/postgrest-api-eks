@@ -1,0 +1,31 @@
+name = "compliance-test-vpc-acl"
+vpc  = { id = "vpc-0e54657f7c6aa29b5" }
+rules = {
+  eph_out = {
+    number    = 1000
+    action    = "allow"
+    direction = "egress"
+    ipv4_cidr = "0.0.0.0/0"
+    protocol  = "tcp"
+    from_port = 1024
+    to_port   = 65535
+  }
+  http_in = {
+    number    = 1000
+    action    = "allow"
+    direction = "ingress"
+    ipv4_cidr = "0.0.0.0/0"
+    protocol  = "tcp"
+    from_port = 80
+    to_port   = 80
+  }
+  https_in = {
+    number    = 1001
+    action    = "allow"
+    direction = "ingress"
+    ipv4_cidr = "0.0.0.0/0"
+    protocol  = "tcp"
+    from_port = 443
+    to_port   = 443
+  }
+}
