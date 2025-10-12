@@ -1,4 +1,263 @@
+## Installing cilium for encrypting communication using wireguard and migratin aws vpc-cni
 
+We can obiously do this using terrafom but as when I migrated cni all of my services was running in aws-cni mode. So I chose to setup cillium manually and replace aws-vpc-cni. This process has some downtime. 
+we remove addons
+```terrafom
+addons = {
+  coredns = {}
+  eks-pod-identity-agent = {
+    before_compute = true
+  }
+  kube-proxy = {} # <-- REMOVE
+  vpc-cni = {     # <-- REMOVE
+    before_compute = true
+  }
+}
+=============>>
+addons = {
+  coredns = {}
+  eks-pod-identity-agent = {
+    before_compute = true
+  }
+}
+```
+Also we remove existing kubeproxy and aws-node(somehow its not replaced. Probably we need to replace nodegroup. So I did this)
+
+```bash
+kubectl delete ds -n kube-system kube-proxy
+kubectl delete ds -n kube-system aws-node
+# Both commands should return "Error from server (NotFound)"
+kubectl get ds -n kube-system kube-proxy
+kubectl get ds -n kube-system aws-node
+
+Error from server (NotFound): daemonsets.apps "kube-proxy" not found
+Error from server (NotFound): daemonsets.apps "aws-node" not found
+```
+
+and apply then terrafom config and add following helm charts
+```bash
+helm repo add cilium https://helm.cilium.io/
+helm repo update
+```
+apply the cilium charts
+```bash
+EKS_CLUSTER_NAME="k8s-test" # Confirm this is the correct name
+AWS_REGION="us-east-1"      # Must match the region in your Terraform
+K8S_HOST=$(aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --query "cluster.endpoint" --output text | sed 's|^https://||')
+
+echo $K8S_HOST
+
+helm install cilium cilium/cilium --version ${CILIUM_VERSION} \
+  --namespace kube-system \
+  --set eni.enabled=true \
+  --set ipam.mode=eni \
+  --set routingMode=native \
+  --set kubeProxyReplacement=true \
+  --set k8sServiceHost=${K8S_HOST} \
+  --set k8sServicePort=443 \
+  --set encryption.enabled=true \
+  --set encryption.type=wireguard \
+  --set encryption.nodeEncryption=true \
+  --set egressMasqueradeInterfaces=eth0 \
+  --set operator.replicas=1 
+```
+verufy the deployment
+```kubectl
+k get pods -n kube-system
+
+NAME                                            READY   STATUS    RESTARTS      AGE
+cilium-envoy-8spt8                              1/1     Running   0             87m
+cilium-envoy-hlb9z                              1/1     Running   0             87m
+cilium-envoy-r8ttx                              1/1     Running   0             88m
+cilium-operator-77b85d47d9-fkfnq                1/1     Running   0             88m
+cilium-qk4q9                                    1/1     Running   0             87m
+cilium-swth6                                    1/1     Running   0             87m
+cilium-xnrsp                                    1/1     Running   0             88m
+```
+We also check encryption status for cilium
+
+```bash
+kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep -E "Encryption|KubeProxyReplacement"
+
+KubeProxyReplacement:    True   [eth0   10.0.18.223 fe80::57:c9ff:fe92:4aa1 (Direct Routing), pod-id-link0    169.254.170.23 fd00:ec2::23 fe80::b4ab:15ff:fe45:21dd, eth1   10.0.29.98 fe80::d6:b2ff:fe26:7c43, eth2   10.0.31.240 fe80::36:adff:fe6b:f227]
+Encryption:              Wireguard       [NodeEncryption: Enabled, cilium_wg0 (Pubkey: Eks3PpUisGSGZtffol0SM9YKqAJcgIww8PpHoQKVXEY=, Port: 51871, Peers: 2)]
+```
+After that we need to restart all deployment and statefullsets in all namespaces
+```bash
+kubectl rollout restart statefulsets
+kubectl rollout restart deployment
+```
+Finally if you run cillium status you will see cilium cover all pods in all namespaces
+
+```bash
+cilium status
+    /¯¯\
+ /¯¯\__/¯¯\    Cilium:             OK
+ \__/¯¯\__/    Operator:           OK
+ /¯¯\__/¯¯\    Envoy DaemonSet:    OK
+ \__/¯¯\__/    Hubble Relay:       disabled
+    \__/       ClusterMesh:        disabled
+
+DaemonSet              cilium                   Desired: 3, Ready: 3/3, Available: 3/3
+DaemonSet              cilium-envoy             Desired: 3, Ready: 3/3, Available: 3/3
+Deployment             cilium-operator          Desired: 1, Ready: 1/1, Available: 1/1
+Containers:            cilium                   Running: 3
+                       cilium-envoy             Running: 3
+                       cilium-operator          Running: 1
+                       clustermesh-apiserver    
+                       hubble-relay             
+Cluster Pods:          31/31 managed by Cilium
+Helm chart version:    1.18.2
+Image versions         cilium             quay.io/cilium/cilium:v1.18.2@sha256:858f807ea4e20e85e3ea3240a762e1f4b29f1cb5bbd0463b8aa77e7b097c0667: 3
+                       cilium-envoy       quay.io/cilium/cilium-envoy:v1.34.7-1757592137-1a52bb680a956879722f48c591a2ca90f7791324@sha256:7932d656b63f6f866b6732099d33355184322123cfe1182e6f05175a3bc2e0e0: 3
+                       cilium-operator    quay.io/cilium/operator-aws:v1.18.2@sha256:1cb856fbe265dfbcfe816bd6aa4acaf006ecbb22dcc989116a1a81bb269ea328: 1
+```
+## Installing ARGO cd and Deploy Postgrest-api
+To install argocd following steps are taken
+```yaml
+kubectl create namespace argocd
+kubectl apply -n argocd -f argocd/install.yaml
+```
+To access the ArgoCD UI, you need to forward the ArgoCD server port:
+
+```bash
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+```
+The default username is admin, and to retrieve the password, use:
+```bash
+kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath={.data.password} | base64 -d
+```
+
+Then we connect our git repo from the setting and create a argocd application for postgrest-api application
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kustomize-postgrest-api
+  namespace: argocd
+spec:
+  destination:
+    namespace: api-auth
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: deployments/postgrest-api
+    repoURL: git@github.com:muntashir-islam/postgrest-api-eks.git
+    targetRevision: HEAD
+  syncPolicy:
+    automated:
+      selfHeal: true
+```
+here in deployments/postgrest-api we have postgrest deployment manifest managed by kustomize. This one is very simple one but in multi environment setup we keep these values into overlays and the provide patch from other environment folder like test, stage, production
+
+```yaml
+namePrefix: kustomize-
+
+resources:
+- deployment.yaml
+- service.yaml
+- ingress.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+```
+for deployment we use vault generated secrets. Please check vault integration on the later part of the README. 
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgrest-api
+  namespace: api-auth
+  labels:
+    app: postgrest
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: postgrest
+  template:
+    metadata:
+      labels:
+        app: postgrest
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: postgrest
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: postgrest
+        image: postgrest/postgrest:latest
+        ports:
+        - containerPort: 3000
+        env:
+          - name: PGRST_DB_URI
+            valueFrom:
+              secretKeyRef:
+                name: postgrest-secret-vault
+                key: db-uri
+          - name: PGRST_JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: postgrest-secret-vault
+                key: jwt-secret
+          - name: PGRST_JWT_ROLE_CLAIM_KEY # Keycloak role path from the article
+            value: ".resource_access.postgrest_api.roles[0]"
+          - name: PGRST_DB_AUTHENTICATOR_ROLE
+            value: "authenticator"
+          - name: PGRST_DB_ANON_ROLE
+            value: "web_anon"
+          - name: PGRST_DB_SCHEMAS
+            value: "public" 
+```
+For ensuring high availability, we also use so that pod can span multiple az's node
+```yaml
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: postgrest
+              topologyKey: "kubernetes.io/hostname"
+```
+antiAffinity pattern so the pod replica can span over all the nodes avaiable in cluster. For cost issue (keep node number limited otherwise karpenter create new nodes) we using `"kubernetes.io/hostname"` but in production environment we need to use `topologyKey: "topology.kubernetes.io/zone"` to ensure all pods are deployed multi az. For now all our node deployed in 2 azs so ensure HA and fault tolerence.
+
+### Creating ingress and routing internet 
+
+We also install ingress resource which bound with nginx-ingress controller
+here is ingress resource mapping
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prodapi-ingress
+  namespace: api-auth
+  annotations:
+    cert-manager.io/issuer: letsencrypt-postgrest
+    cert-manager.io/acme-challenge-type: http01
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/allow-headers: "true"
+    
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.muntashirislam.com
+      http:
+          paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: postgrest-service
+                port:
+                  number: 80
+  tls:
+  - hosts:
+    -  api.muntashirislam.com
+    secretName: letsencrypt-postgrest-tls
+```
 
 ## Integrate JWT token based authentication for Postgrest API
 
@@ -81,7 +340,24 @@ curl -sS https://auth.muntashirislam.com/realms/my-postgrest-realm/protocol/open
 cat keycloak-jwks.json | base64
 
 ```
-Finally we put this base64 data into the deployment under the env variable `PGRST_JWT_SECRET`
+Finally we put this base64 data into the deployment under the env variable `PGRST_JWT_SECRET` and also include other env variables here
+```yaml
+- name: PGRST_JWT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: postgrest-secret-vault
+      key: jwt-secret
+- name: PGRST_JWT_ROLE_CLAIM_KEY # Keycloak role path
+value: ".resource_access.postgrest_api.roles[0]"
+- name: PGRST_DB_AUTHENTICATOR_ROLE
+  value: "authenticator"
+- name: PGRST_DB_ANON_ROLE
+  value: "web_anon"
+- name: PGRST_DB_SCHEMAS
+  value: "public" 
+```
+
+
 
 now we can get the token from keycloak
 ```bash

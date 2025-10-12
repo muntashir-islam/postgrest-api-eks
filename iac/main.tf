@@ -71,10 +71,10 @@ module "eks" {
     eks-pod-identity-agent = {
       before_compute = true
     }
-    kube-proxy = {}
-    vpc-cni = {
-      before_compute = true
-    }
+    # kube-proxy = {}
+    # vpc-cni = {
+    #   before_compute = true
+    # }
   }
 
   vpc_id                   = module.vpc.vpc_id
