@@ -1,7 +1,131 @@
-## Installing cilium for encrypting communication using wireguard and migratin aws vpc-cni
+This repository demonstrates a robust, cost-optimized, and secure **Kubernetes architecture** designed for running production-grade workloads on AWS EKS. The primary application is a **PostgREST API** secured via Keycloak and HashiCorp Vault.
 
-We can obiously do this using terrafom but as when I migrated cni all of my services was running in aws-cni mode. So I chose to setup cillium manually and replace aws-vpc-cni. This process has some downtime. 
-we remove addons
+## 🌟 Key Features and Architectural Decisions
+
+### Cloud & Compute Layer
+
+* **Platform:** Deployed on **AWS EKS** with workloads running exclusively within **Private Subnets** for enhanced security.
+* **Cluster Autoscaling:** We leverage **Karpenter** for dynamic and efficient scaling, utilizing a dedicated pool of **`m5.large`** instances (Spot and On-Demand) to optimize cost and resource provisioning speed.
+* **Networking (Ingress):** Traffic enters via a dedicated **AWS Network Load Balancer (NLB)** in a public subnet, which routes to the internal **NGINX Ingress Controller**.
+* **Cluster Security (Cilium):** **Cilium** is implemented with **WireGuard** enabled, providing secure, encrypted communication (encryption in transit) across all nodes in the cluster.
+
+### Application & Security Layer
+
+* **API Service (PostgREST):** The data API is powered by **PostgREST**, providing CRUD endpoints directly from the PostgreSQL database structure.
+* **High Availability:** The **PostgREST API deployment** is configured with **Pod Anti-Affinity** across multiple Availability Zones (AZs) and nodes, ensuring the service remains available during node failures.
+* **Database:** A single-replica **PostgreSQL** database is deployed within Kubernetes to minimize infrastructure costs while providing necessary persistence.
+* **Authentication & Authorization:**
+    * **Authentication (AuthN):** Handled externally by **Keycloak** (OIDC), issuing digitally signed JWTs.
+    * **Authorization (AuthZ):** Enforced by **PostgREST** and PostgreSQL's powerful **Role-Level Security (RLS)** based on claims extracted from the JWT.
+* **Secret Management:** All sensitive configuration—including the DB URI, Keycloak JWKS endpoint, and credentials—is managed by **HashiCorp Vault** using the **Vault Agent Injector** for secure, dynamic secret delivery.
+* **TLS/SSL:** **Cert-Manager** automatically provisions and manages TLS certificates for all exposed application endpoints.
+
+### Observability
+
+* **Logging:** Logs are collected cluster-wide by **Filebeat** and pushed centrally to an **Elasticsearch** cluster.
+* **Metrics:** Metrics are collected and stored in **Prometheus** for performance monitoring and alerting.
+
+### Scaling and Deployment
+
+* **Application Autoscaling (PostgREST API):** **Horizontal Pod Autoscaler (HPA)** is deployed to scale the PostgREST API workload up to **5 replicas**, tracking **CPU utilization** as the primary metric.
+* **Deployment Method:** The entire PostgREST API lifecycle (deployment, scaling, configuration) follows a **GitOps approach** using **ArgoCD**.
+
+
+## 🚀 Application Architecture Summary
+
+The architecture creates a secure data API by separating **Authentication** (handled by Keycloak and NGINX) from **Authorization** (enforced by PostgREST and PostgreSQL).
+
+| Component | Technology | Role |
+| :--- | :--- | :--- |
+| **API Gateway** | **NGINX Ingress** | Routes traffic (`postgrest-api.muntashirislam.com`) and enforces **Authentication** using the external JWT Validator pattern. |
+| **Identity Provider** | **Keycloak** (`oauth.muntashirislam.com`) | Issues signed **JWTs (RS256)** via the Password Grant flow. Provides the public key via the **JWKS endpoint** for validation. |
+| **Secret Management** | **HashiCorp Vault** | Securely stores and injects sensitive configuration (DB connection string, JWKS URL) into the PostgREST Pod using the **Vault Agent Sidecar Injector**. |
+| **API Backend** | **PostgREST** | Validates the JWT, extracts the **`role` claim**, and executes requests by impersonating a secure PostgreSQL role. |
+| **Data Layer** | **PostgreSQL** | Enforces all **Authorization** rules via role permissions and **Row-Level Security (RLS)**. |
+
+***
+## 🛡️ Key Security and Authorization Configurations
+
+The security framework relies on the following configurations:
+
+### 1. Token Validation (PostgREST Configuration)
+
+PostgREST is configured for **Asymmetric JWT Verification** (RS256) by specifying the remote public key endpoint.
+
+* **Configuration Parameter:** `PGRST_JWT_SECRET`
+* **Value (Injected from Vault):** `@https://oauth.muntashirislam.com/realms/my-postgrest-realm/protocol/openid-connect/certs`
+    *(The `@` prefix instructs PostgREST to fetch the Keycloak public key from this JWKS endpoint.)*
+
+### 2. Role-Based Authorization (PostgreSQL)
+
+Authorization is managed by three PostgreSQL roles:
+
+| Role Name | Access Level | PostgREST Config |
+| :--- | :--- | :--- |
+| **`authenticator`** | **Privileged DB Connector.** Used by PostgREST to connect and switch roles. | `PGRST_DB_AUTHENTICATOR_ROLE` |
+| **`inventory_user`** | **Authenticated User.** Granted `SELECT`, `INSERT`, `UPDATE`, `DELETE` on exposed objects (e.g., `products`). | Mapped via JWT claim. |
+| **`web_anon`** | **Anonymous User.** **Access REVOKED.** Has no `SELECT` privileges on tables/views, enforcing a mandatory JWT for all data access. | `PGRST_DB_ANON_ROLE` |
+
+### 3. Secret Management (Vault)
+* Utilizing vault secret operator(vso)
+* **Secrets Path:** `secret/apiauth`
+* **K8s Role:** `vso-role` (Bound to the `default` Service Account in the `api-auth` namespace).
+* **Injection:** The **Vault VaultStaticSecret CRD** fetches necessary secrets and exposes them as secrets variables mounted as env inside the DB and PostgREST application container.
+
+***
+
+## ⚙️ How to Test the API
+
+Assuming the deployment is running and your environment variable `$ACCESS_TOKEN` is set with a valid token for the `inventory_user`:
+
+### 1. Anonymous Access (Expected Failure)
+
+All attempts without a token should fail, confirming security is enforced:
+
+```bash
+curl -i '[https://postgrest-api.muntashirislam.com/products](https://postgrest-api.muntashirislam.com/products)'
+# EXPECTED: 401 Unauthorized
+```
+
+### 1. Authenticated CRUD Operation (Success)
+
+A request with a valid token should successfully create a resource:
+```bash
+ACCESS_TOKEN=$(
+  curl -s --location 'https://oauth.muntashirislam.com/realms/my-postgrest-realm/protocol/openid-connect/token' \
+    --header 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode 'client_id=postgrest_api' \
+    --data-urlencode 'username=muntashir' \
+    --data-urlencode 'password=admin321' \
+    --data-urlencode 'grant_type=password' \
+    --data-urlencode 'client_secret=W043cYReKtTVMeBkLl6KAYZFX4cEcTlS' \
+    | jq -r '.access_token'
+)
+curl -i  -H "Authorization: Bearer $ACCESS_TOKEN" 'https://postgrest-api.muntashirislam.com/products'
+HTTP/2 200 
+date: Mon, 13 Oct 2025 13:43:01 GMT
+content-type: application/json; charset=utf-8
+content-length: 549
+content-range: 0-4/*
+content-location: /products
+strict-transport-security: max-age=31536000; includeSubDomains
+
+[{"product_id":1,"product_name":"Test Product2","price":200,"description":"Auth Test 2"}, 
+ {"product_id":2,"product_name":"Test Product3","price":300,"description":"Auth Test 3"}, 
+ {"product_id":3,"product_name":"Premium Keyboard","price":129.99,"description":"Mechanical keyboard with brown switches."}, 
+ {"product_id":4,"product_name":"Wireless Mouse","price":49.50,"description":"Ergonomic gaming mouse, RGB lighting."}, 
+ {"product_id":5,"product_name":"4K Monitor","price":499.00,"description":"27-inch 4K monitor with 144Hz refresh rate."}]   
+```
+## Overall Cluster preparation Procedure
+
+Navigate to the iac directory and run `terraform apply`. This command will create all required resources and deploy the necessary Helm charts for components such as the CSI driver, LoadBalancer, Node Identity, Karpenter, and others. The cluster is initially set up using the AWS VPC-CNI, which can later be replaced with a different CNI plugin if needed.
+
+### Installing Cilium CNI
+For installing cilium cni we do following steps
+1. **Update Terraform Addons** 
+
+Remove kube-proxy and vpc-cni from your Terraform configuration and run `terraform apply`:
+
 ```terrafom
 addons = {
   coredns = {}
@@ -21,7 +145,9 @@ addons = {
   }
 }
 ```
-Also we remove existing kubeproxy and aws-node(somehow its not replaced. Probably we need to replace nodegroup. So I did this)
+2. **Remove Existing DaemonSets**
+
+Delete the default kube-proxy and aws-node DaemonSets:
 
 ```bash
 kubectl delete ds -n kube-system kube-proxy
@@ -34,15 +160,16 @@ Error from server (NotFound): daemonsets.apps "kube-proxy" not found
 Error from server (NotFound): daemonsets.apps "aws-node" not found
 ```
 
-and apply then terrafom config and add following helm charts
+3. **Install Cilium via Helm**
+Add and update the Cilium Helm repository:
 ```bash
 helm repo add cilium https://helm.cilium.io/
 helm repo update
 ```
-apply the cilium charts
+Install Cilium:
 ```bash
-EKS_CLUSTER_NAME="k8s-test" # Confirm this is the correct name
-AWS_REGION="us-east-1"      # Must match the region in your Terraform
+EKS_CLUSTER_NAME="k8s-test" 
+AWS_REGION="us-east-1" 
 K8S_HOST=$(aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --query "cluster.endpoint" --output text | sed 's|^https://||')
 
 echo $K8S_HOST
@@ -61,7 +188,10 @@ helm install cilium cilium/cilium --version ${CILIUM_VERSION} \
   --set egressMasqueradeInterfaces=eth0 \
   --set operator.replicas=1 
 ```
-verufy the deployment
+4. **Verify Cilium Deployment**
+
+  Check pods in `kube-system` namespace:
+
 ```kubectl
 k get pods -n kube-system
 
@@ -74,7 +204,7 @@ cilium-qk4q9                                    1/1     Running   0             
 cilium-swth6                                    1/1     Running   0             87m
 cilium-xnrsp                                    1/1     Running   0             88m
 ```
-We also check encryption status for cilium
+ Check Cilium encryption and kube-proxy replacement status:
 
 ```bash
 kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep -E "Encryption|KubeProxyReplacement"
@@ -82,12 +212,12 @@ kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep -E "Encryption
 KubeProxyReplacement:    True   [eth0   10.0.18.223 fe80::57:c9ff:fe92:4aa1 (Direct Routing), pod-id-link0    169.254.170.23 fd00:ec2::23 fe80::b4ab:15ff:fe45:21dd, eth1   10.0.29.98 fe80::d6:b2ff:fe26:7c43, eth2   10.0.31.240 fe80::36:adff:fe6b:f227]
 Encryption:              Wireguard       [NodeEncryption: Enabled, cilium_wg0 (Pubkey: Eks3PpUisGSGZtffol0SM9YKqAJcgIww8PpHoQKVXEY=, Port: 51871, Peers: 2)]
 ```
-After that we need to restart all deployment and statefullsets in all namespaces
+5. Restart All Deployments and StatefulSets in all namespaces
 ```bash
 kubectl rollout restart statefulsets
 kubectl rollout restart deployment
 ```
-Finally if you run cillium status you will see cilium cover all pods in all namespaces
+Finally confirm Cilium Coverage
 
 ```bash
 cilium status
@@ -112,6 +242,257 @@ Image versions         cilium             quay.io/cilium/cilium:v1.18.2@sha256:8
                        cilium-envoy       quay.io/cilium/cilium-envoy:v1.34.7-1757592137-1a52bb680a956879722f48c591a2ca90f7791324@sha256:7932d656b63f6f866b6732099d33355184322123cfe1182e6f05175a3bc2e0e0: 3
                        cilium-operator    quay.io/cilium/operator-aws:v1.18.2@sha256:1cb856fbe265dfbcfe816bd6aa4acaf006ecbb22dcc989116a1a81bb269ea328: 1
 ```
+
+### Installing HashiCorp Vault to securely manage all secret data.
+
+We will install Vault to securely store all the necessary secrets required for our application deployments. Begin by preparing the configuration values for the Vault Helm chart in a vault-values.yaml file.
+
+```yaml
+server:
+  # Use the File storage backend for persistent data
+  standalone:
+    enabled: true
+
+  # Persistence settings
+  dataStorage:
+    enabled: true
+    # Requests 1GB of persistent storage
+    size: 1Gi
+    storageClass: "gp2" # Our cluster's StorageClass if needed
+
+  # Service type to expose the UI/API
+  service:
+    type: ClusterIP
+
+  # UI settings
+  ui:
+    enabled: true
+    serviceType: ClusterIP
+```
+Installing the Vault Helm chart.
+
+```bash
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm install vault hashicorp/vault --namespace vault -f vault-values.yaml
+```
+
+At this stage, the Vault pods should be running, but they will be in an unsealed state.
+
+```bash
+k get pods -n vault
+
+NAME                                    READY   STATUS    RESTARTS   AGE
+vault-0                                 0/1     Running   0          3m28s
+vault-agent-injector-556c5dd8fb-wcdtk   1/1     Running   0          3m28s
+```
+We will now initialize Vault. (The following example uses demo data.)
+
+```bash
+kubectl exec -it vault-0 -n vault -- /bin/sh
+
+kubectl exec -it -n vault vault-0 -- vault operator init
+Unseal Key 1: 1tDyzFVgaf36yFsJJIdZwqjQG3cDtJvgl+jiQhD6dvIg
+Unseal Key 2: Vr+JVzTT95kQsmMOeK0zlySNKqEMUZuMQk35vDMGBqzO
+Unseal Key 3: Tl6cQP7t+0VqOUxfkvIWbiBeCeEXwhwo8ooSNdaiQnyJ
+Unseal Key 4: 1jwoJDdBKUQe3/j//t7SPpWPEuz6cbfNes6sN3Lazehl
+Unseal Key 5: mLWl+2pgNVI//R4Cwdc5se83GL3DEc6aCVFzNK8yEb9c
+
+Initial Root Token: hvs.cqjLOdguKyytSN0ETmppGZ3H
+
+Vault initialized with 5 key shares and a key threshold of 3. Please securely
+distribute the key shares printed above. When the Vault is re-sealed,
+restarted, or stopped, you must supply at least 3 of these keys to unseal it
+before it can start servicing requests.
+
+Vault does not store the generated root key. Without at least 3 keys to
+reconstruct the root key, Vault will remain permanently sealed!
+
+It is possible to generate new unseal keys, provided you have a quorum of
+existing unseal keys shares. See "vault operator rekey" for more information.
+
+vault operator unseal po4J/KvzgrzTHjo5a3iEZcW+84oZ1g7ZBOQhceA0aJw=
+Key             Value
+---             -----
+Seal Type       shamir
+Initialized     true
+Sealed          false
+Total Shares    1
+Threshold       1
+Version         1.20.4
+Build Date      2025-09-23T13:22:38Z
+Storage Type    file
+Cluster Name    vault-cluster-d125f0b9
+Cluster ID      aa114368-1a23-5ea1-7d53-9b4bdd78b5ba
+HA Enabled      false
+```
+
+After running these commands, Vault should now be in a running state.
+
+```bash
+k get pods -n vault
+
+NAME                                    READY   STATUS    RESTARTS   AGE
+vault-0                                 1/1     Running   0          12m
+vault-agent-injector-556c5dd8fb-wcdtk   1/1     Running   0          12m
+```
+
+Next, we need to configure Vault for use with the Kubernetes Secret Store CSI driver. The following steps outline the required setup:
+
+```bash
+/ $ export VAULT_ADDR='http://127.0.0.1:8200'
+/ $ vault login hvs.X24TmcMeJnhKtKlj4XKkr0Dl
+Success! You are now authenticated. The token information displayed below
+is already stored in the token helper. You do NOT need to run "vault login"
+again. Future Vault requests will automatically use this token.
+
+Key                  Value
+---                  -----
+token                hvs.X24TmcMeJnhKtKlj4XKkr0Dl
+token_accessor       cs6Cl1Xba8ctLAe5TohWwBzB
+token_duration       ∞
+token_renewable      false
+token_policies       ["root"]
+identity_policies    []
+policies             ["root"]
+/ $ vault auth enable kubernetes
+Success! Enabled kubernetes auth method at: kubernetes/
+```
+Configure Vault to use your Kubernetes cluster’s service account JWT and CA certificate:
+
+```bash
+vault write auth/kubernetes/config \
+    token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+    kubernetes_host="https://${KUBERNETES_PORT_443_TCP_ADDR}:443" \
+    kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+```
+Next, create a Vault policy in an .hcl file.
+
+```bash
+path "secret/data/*" {
+  capabilities = ["read", "list"]
+}
+path "secret/metadata/*" {
+  capabilities = ["read", "list"]
+}
+```
+
+Finally, create a Vault role and associate it with the policy. This role can be accessed from any namespace within the cluster.
+
+```bash
+vault write auth/kubernetes/role/vso-role \
+    bound_service_account_names=vault-secrets-operator \
+    bound_service_account_namespaces="*" \
+    policies=vso-policy \
+    ttl=24h
+```
+### Deploying the Vault Secrets Operator (VSO).
+
+Add the Helm repo:
+
+```bash
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm repo update
+```
+Install the operator:
+
+```bash
+kubectl create namespace vault-system
+
+helm install vault-secrets-operator hashicorp/vault-secrets-operator \
+  --namespace vault-system
+```
+Next, we will add secrets to Vault. Follow these steps:
+
+1. Create a KV secrets engine called `secret`.
+
+2. Within secrets, create a secret named `apiauth`.
+
+3. Add keys `db-uri` and `jwt-secret` with their respective values.(This will be used later deploying `Postgrest-API` application)
+
+4. Create a VaultAuth and SecretSync Custom Resource Definition (CRD) to enable Kubernetes access to these secrets.
+
+```yaml
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: vault-auth
+  namespace: api-auth
+spec:
+  method: kubernetes
+  mount: kubernetes
+  kubernetes:
+    role: vso-role
+    serviceAccount: vault-secrets-operator
+  vaultConnectionRef: vault-connection
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultConnection
+metadata:
+  name: vault-connection
+  namespace: api-auth
+spec:
+  address: "http://vault.vault.svc:8200"
+  skipTLSVerify: true
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  name: postgrest-secret
+  namespace: api-auth
+spec:
+  vaultAuthRef: vault-auth
+  mount: secret
+  type: kv-v2
+  path: postgres
+  refreshAfter: 60s
+  destination:
+    create: true
+    name: postgres-secret-vault
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  name: postgrest-api-secret
+  namespace: api-auth
+spec:
+  vaultAuthRef: vault-auth   # VaultAuth must exist in vault-system
+  mount: secret
+  type: kv-v2
+  path: apiauth
+  refreshAfter: 60s
+  destination:
+    create: true
+    name: postgrest-api-secret-vault
+```
+Now apply this and we can see the secrets is populated
+```bash
+k get secrets -n api-auth
+NAME                        TYPE                DATA   AGE
+letsencrypt-postgrest       Opaque              1      14h
+letsencrypt-postgrest-tls   kubernetes.io/tls   2      14h
+postgres-credentials        Opaque              2      15h
+postgrest-app-secrets       Opaque              2      14h
+postgrest-secret-vault      Opaque              3      6s
+
+❯ k describe -n api-auth secrets postgrest-secret-vault
+Name:         postgrest-secret-vault
+Namespace:    api-auth
+Labels:       app.kubernetes.io/component=secret-sync
+              app.kubernetes.io/managed-by=hashicorp-vso
+              app.kubernetes.io/name=vault-secrets-operator
+              secrets.hashicorp.com/vso-ownerRefUID=082931ae-789a-4cee-8d89-b7a7cee2fc9d
+Annotations:  <none>
+
+Type:  Opaque
+
+Data
+====
+_raw:        3289 bytes
+db_url:      63 bytes
+jwt-secret:  2981 bytes
+
+```
+
 ## Installing ARGO cd and Deploy Postgrest-api
 To install argocd following steps are taken
 ```yaml
@@ -406,226 +787,5 @@ strict-transport-security: max-age=31536000; includeSubDomains
 {"code":"42501","details":null,"hint":null,"message":"permission denied for table products"}%  
 ```
 
-### installing using Hashicorp vault 
-We are going to install vault for storing all the necessary secrets for our application deployments. First prepare all necessary values for installing helm charts for vault in vault-values.yaml file
-
-```yaml
-server:
-  # Use the File storage backend for persistent data
-  standalone:
-    enabled: true
-
-  # Persistence settings
-  dataStorage:
-    enabled: true
-    # Requests 1GB of persistent storage
-    size: 1Gi
-    storageClass: "gp2" # Our cluster's StorageClass if needed
-
-  # Service type to expose the UI/API
-  service:
-    type: ClusterIP
-
-  # UI settings
-  ui:
-    enabled: true
-    serviceType: ClusterIP
-```
-The install vault chart
-
-```bash
-helm repo add hashicorp https://helm.releases.hashicorp.com
-helm install vault hashicorp/vault --namespace vault -f vault-values.yaml
-```
-
-Now we can see vault pods running in unseal conditions
-```bash
-k get pods -n vault
-
-NAME                                    READY   STATUS    RESTARTS   AGE
-vault-0                                 0/1     Running   0          3m28s
-vault-agent-injector-556c5dd8fb-wcdtk   1/1     Running   0          3m28s
-```
-We now initialize vault (Following is demo data)
-
-```bash
-kubectl exec -it vault-0 -n vault -- /bin/sh
-
-kubectl exec -it -n vault vault-0 -- vault operator init
-Unseal Key 1: 1tDyzFVgaf36yFsJJIdZwqjQG3cDtJvgl+jiQhD6dvIg
-Unseal Key 2: Vr+JVzTT95kQsmMOeK0zlySNKqEMUZuMQk35vDMGBqzO
-Unseal Key 3: Tl6cQP7t+0VqOUxfkvIWbiBeCeEXwhwo8ooSNdaiQnyJ
-Unseal Key 4: 1jwoJDdBKUQe3/j//t7SPpWPEuz6cbfNes6sN3Lazehl
-Unseal Key 5: mLWl+2pgNVI//R4Cwdc5se83GL3DEc6aCVFzNK8yEb9c
-
-Initial Root Token: hvs.cqjLOdguKyytSN0ETmppGZ3H
-
-Vault initialized with 5 key shares and a key threshold of 3. Please securely
-distribute the key shares printed above. When the Vault is re-sealed,
-restarted, or stopped, you must supply at least 3 of these keys to unseal it
-before it can start servicing requests.
-
-Vault does not store the generated root key. Without at least 3 keys to
-reconstruct the root key, Vault will remain permanently sealed!
-
-It is possible to generate new unseal keys, provided you have a quorum of
-existing unseal keys shares. See "vault operator rekey" for more information.
-
-vault operator unseal po4J/KvzgrzTHjo5a3iEZcW+84oZ1g7ZBOQhceA0aJw=
-Key             Value
----             -----
-Seal Type       shamir
-Initialized     true
-Sealed          false
-Total Shares    1
-Threshold       1
-Version         1.20.4
-Build Date      2025-09-23T13:22:38Z
-Storage Type    file
-Cluster Name    vault-cluster-d125f0b9
-Cluster ID      aa114368-1a23-5ea1-7d53-9b4bdd78b5ba
-HA Enabled      false
-```
-
-After running these command we can now find that the vault is in running state
-```bash
-k get pods -n vault
-
-NAME                                    READY   STATUS    RESTARTS   AGE
-vault-0                                 1/1     Running   0          12m
-vault-agent-injector-556c5dd8fb-wcdtk   1/1     Running   0          12m
-```
-
-Now we need to prepare vault to use in kubernetes secret provider. We need to execute following steps
-
-```bash
-/ $ export VAULT_ADDR='http://127.0.0.1:8200'
-/ $ vault login hvs.X24TmcMeJnhKtKlj4XKkr0Dl
-Success! You are now authenticated. The token information displayed below
-is already stored in the token helper. You do NOT need to run "vault login"
-again. Future Vault requests will automatically use this token.
-
-Key                  Value
----                  -----
-token                hvs.X24TmcMeJnhKtKlj4XKkr0Dl
-token_accessor       cs6Cl1Xba8ctLAe5TohWwBzB
-token_duration       ∞
-token_renewable      false
-token_policies       ["root"]
-identity_policies    []
-policies             ["root"]
-/ $ vault auth enable kubernetes
-Success! Enabled kubernetes auth method at: kubernetes/
-```
-Configure Vault to use your cluster’s service account JWT and CA:
-```bash
-vault write auth/kubernetes/config \
-    token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
-    kubernetes_host="https://${KUBERNETES_PORT_443_TCP_ADDR}:443" \
-    kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-```
-Then we create policy in .hcl file
-```bash
-path "secret/data/*" {
-  capabilities = ["read", "list"]
-}
-path "secret/metadata/*" {
-  capabilities = ["read", "list"]
-}
-```
-
-Finally we create a role associated with policy. And this role can be used from any namespaces
-
-```bash
-vault write auth/kubernetes/role/vso-role \
-    bound_service_account_names=vault-secrets-operator \
-    bound_service_account_namespaces="*" \
-    policies=vso-policy \
-    ttl=24h
-```
-### Now we are going to deploy vault Vault Secrets Operator (VSO)
-Add the Helm repo:
-
-```bash
-helm repo add hashicorp https://helm.releases.hashicorp.com
-helm repo update
-```
-Install the operator:
-
-```bash
-kubectl create namespace vault-system
-
-helm install vault-secrets-operator hashicorp/vault-secrets-operator \
-  --namespace vault-system
-```
-Now we need to put secrets into vault for this we are going to create `secrets` kv and there create a secret named apiauth. then put secret there under key `db_url` and `jwt-secret` wwith required value. 
-Now create a VaultAuth and Secret Sync CRD
-
-```yaml
-apiVersion: secrets.hashicorp.com/v1beta1
-kind: VaultAuth
-metadata:
-  name: vault-auth
-  namespace: api-auth
-spec:
-  method: kubernetes
-  mount: kubernetes
-  kubernetes:
-    role: vso-role
-    serviceAccount: vault-secrets-operator
-  vaultConnectionRef: vault-connection
----
-apiVersion: secrets.hashicorp.com/v1beta1
-kind: VaultConnection
-metadata:
-  name: vault-connection
-  namespace: api-auth
-spec:
-  address: "http://vault.vault.svc:8200"
-  skipTLSVerify: true
----
-apiVersion: secrets.hashicorp.com/v1beta1
-kind: VaultStaticSecret
-metadata:
-  name: postgrest-secret
-  namespace: api-auth
-spec:
-  vaultAuthRef: vault-auth
-  mount: secret
-  type: kv-v2
-  path: apiauth
-  refreshAfter: 60s
-  destination:
-    create: true
-    name: postgrest-secret-vault
-```
-Now apply this and we can see the secrets is populated
-```bash
-k get secrets -n api-auth
-NAME                        TYPE                DATA   AGE
-letsencrypt-postgrest       Opaque              1      14h
-letsencrypt-postgrest-tls   kubernetes.io/tls   2      14h
-postgres-credentials        Opaque              2      15h
-postgrest-app-secrets       Opaque              2      14h
-postgrest-secret-vault      Opaque              3      6s
-
-❯ k describe -n api-auth secrets postgrest-secret-vault
-Name:         postgrest-secret-vault
-Namespace:    api-auth
-Labels:       app.kubernetes.io/component=secret-sync
-              app.kubernetes.io/managed-by=hashicorp-vso
-              app.kubernetes.io/name=vault-secrets-operator
-              secrets.hashicorp.com/vso-ownerRefUID=082931ae-789a-4cee-8d89-b7a7cee2fc9d
-Annotations:  <none>
-
-Type:  Opaque
-
-Data
-====
-_raw:        3289 bytes
-db_url:      63 bytes
-jwt-secret:  2981 bytes
-
-```
 
 
