@@ -790,7 +790,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: api.muntashirislam.com
+    - host: postgrest-api.muntashirislam.com
       http:
           paths:
           - path: /
@@ -802,10 +802,123 @@ spec:
                   number: 80
   tls:
   - hosts:
-    -  api.muntashirislam.com
+    -  postgrest-api.muntashirislam.com
     secretName: letsencrypt-postgrest-tls
 ```
+## Monitoring and Logging
 
+For monitoring, we will deploy the Prometheus and Grafana stack using Helm charts.
 
+```bash
+helm install prometheus prometheus-community/prometheus \
+  --namespace monitoring \
+  --set alertmanager.enabled=false \
+  --set server.persistentVolume.enabled=true \
+  --set server.persistentVolume.storageClass=gp2 \
+  --set server.persistentVolume.size=2G
+
+helm install grafana grafana/grafana \
+  --namespace monitoring \
+  --set adminUser=admin \
+  --set adminPassword=admin321
+
+k get all -n monitoring
+
+NAME                                                     READY   STATUS    RESTARTS   AGE
+pod/grafana-847755c5b8-8wtxd                             1/1     Running   0          10h
+pod/prometheus-kube-state-metrics-d4fd85895-g6hq5        1/1     Running   0          10h
+pod/prometheus-prometheus-node-exporter-9jv96            1/1     Running   0          10h
+pod/prometheus-prometheus-node-exporter-jmjn5            1/1     Running   0          10h
+pod/prometheus-prometheus-node-exporter-v772j            1/1     Running   0          10h
+pod/prometheus-prometheus-pushgateway-65ddfcc6c4-dgnmk   1/1     Running   0          10h
+pod/prometheus-server-5c6cdd5d7-fh5b5                    2/2     Running   0          10h
+
+NAME                                          TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE
+service/grafana                               ClusterIP   172.20.146.171   <none>        80/TCP     10h
+service/prometheus-kube-state-metrics         ClusterIP   172.20.90.5      <none>        8080/TCP   10h
+service/prometheus-prometheus-node-exporter   ClusterIP   172.20.118.34    <none>        9100/TCP   10h
+service/prometheus-prometheus-pushgateway     ClusterIP   172.20.32.157    <none>        9091/TCP   10h
+service/prometheus-server                     ClusterIP   172.20.88.74     <none>        80/TCP     10h
+
+NAME                                                 DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
+daemonset.apps/prometheus-prometheus-node-exporter   3         3         3       3            3           kubernetes.io/os=linux   10h
+
+NAME                                                READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/grafana                             1/1     1            1           10h
+deployment.apps/prometheus-kube-state-metrics       1/1     1            1           10h
+deployment.apps/prometheus-prometheus-pushgateway   1/1     1            1           10h
+deployment.apps/prometheus-server                   1/1     1            1           10h
+
+NAME                                                           DESIRED   CURRENT   READY   AGE
+replicaset.apps/grafana-847755c5b8                             1         1         1       10h
+replicaset.apps/prometheus-kube-state-metrics-d4fd85895        1         1         1       10h
+replicaset.apps/prometheus-prometheus-pushgateway-65ddfcc6c4   1         1         1       10h
+replicaset.apps/prometheus-server-5c6cdd5d7                    1         1         1       10h
+```
+<img width="1487" height="975" alt="image" src="https://github.com/user-attachments/assets/1a92ae8b-ae43-4fd9-929d-e66e0ab9d355" />
+
+Grafana is deployed in a stateless configuration for simplicity in this setup.
+
+For logging, we deploy a simple custom setup using the manifests available in the `monitoring/logging` directory.
+```bash
+k get all -n log
+NAME                                 READY   STATUS    RESTARTS   AGE
+pod/elasticsearch-6b5b84567b-24zrr   1/1     Running   0          3h39m
+pod/filebeat-8t55p                   1/1     Running   0          107m
+pod/filebeat-ktdj6                   1/1     Running   0          107m
+pod/filebeat-phjfl                   1/1     Running   0          107m
+pod/kibana-6fd4dc4968-gpqpl          1/1     Running   0          3h37m
+
+NAME                    TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE
+service/elasticsearch   ClusterIP   172.20.105.236   <none>        9200/TCP   3h46m
+service/kibana          ClusterIP   172.20.102.248   <none>        5601/TCP   3h37m
+
+NAME                      DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+daemonset.apps/filebeat   3         3         3       3            3           <none>          108m
+
+NAME                            READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/elasticsearch   1/1     1            1           3h46m
+deployment.apps/kibana          1/1     1            1           3h37m
+
+NAME                                       DESIRED   CURRENT   READY   AGE
+replicaset.apps/elasticsearch-57cc9dcdf6   0         0         0       3h46m
+replicaset.apps/elasticsearch-6b5b84567b   1         1         1       3h39m
+replicaset.apps/elasticsearch-868675f46b   0         0         0       3h41m
+replicaset.apps/kibana-6fd4dc4968          1         1         1       3h37m
+```
+<img width="1624" height="1022" alt="image" src="https://github.com/user-attachments/assets/41ce4e04-ac7c-44f5-b5ab-edb6e97afa27" />
+Logging and metrics endpoint are not exposed internet.
+
+## Improvements
+
+There are several enhancements we can make to this stack to improve availability, security, and performance. Some of the key improvements include:
+
+1. **High Availability Across AZs/Zones**  
+   Ensure all deployments are highly available by spanning pods across multiple Availability Zones or even regions to improve fault tolerance.
+
+2. **Security Contexts for Applications**  
+   Apply Kubernetes security contexts and Pod Security Standards for all applications to enforce least-privilege access and mitigate risks.
+
+3. **Enhanced PostgREST API Security**  
+   Use Keycloak more extensively to control API access, implement fine-grained RBAC, and secure endpoints with OAuth2/JWT policies.
+
+4. **Optimized Node Pools with Karpenter**  
+   Use Karpenter to automatically scale and optimize node pools based on workload demand, reducing cost and improving efficiency.
+
+5. **Persistent Grafana and Prometheus Storage**  
+   Configure persistent storage for monitoring stack to retain metrics and dashboards across pod restarts.
+
+6. **CI/CD Integration with ArgoCD**  
+   Automate deployments across environments (dev, test, stage, production) using GitOps best practices and ArgoCD. Cover all deployment under argo. 
+
+7. **Resource Limits and Requests**  
+   Define proper CPU/memory requests and limits for all workloads to prevent resource contention and ensure cluster stability.
+
+8. **Network Policies**  
+   Apply Kubernetes NetworkPolicies to restrict traffic between pods and services, enhancing security and reducing attack surface.
+
+9. **Secret Management Best Practices**  
+    Leverage HashiCorp Vault more robustly by enabling automatic secret rotation and avoiding hardcoded credentials in applications.
+   
 
 
