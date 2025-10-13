@@ -506,24 +506,175 @@ Here
 1. Secrets are managed by vault
 2. Keycloak is exposed on `https://oauth.muntashirislam.com`
 
+Below are some snapshots taken during the Keycloak configuration process.
+<img width="1777" height="764" alt="image" src="https://github.com/user-attachments/assets/da34b9ef-dfce-41cd-ab3c-0f3c761ab531" />
+<img width="1790" height="453" alt="image" src="https://github.com/user-attachments/assets/5a23b41b-c19d-4463-a332-b6cbe96188b2" />
+<img width="1790" height="876" alt="image" src="https://github.com/user-attachments/assets/2cf236a2-ca27-436c-a9dc-a120d533a9ee" />
 
+## Integrate JWT token based authentication for Postgrest API
+First, deploy the PostgreSQL database into the api-auth namespace.
+```bash
+kubectl apply -f deployments/postgres-db/postgres.yaml
+```
+Ensure that the PostgreSQL pod is running. In our case, the api-auth namespace contains a running PostgreSQL database.
+
+```yaml
+kubectl get pods -n api-auth
+
+NAME                             READY   STATUS    RESTARTS   AGE
+postgres-6748f9856c-pnz8r        1/1     Running   0          118m
+```
+Next, run the following script to create the necessary roles for JWT authentication.
+```bash
+# 1. Get the Pod name
+PG_POD=$(kubectl get pods -n api-auth -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+
+# 2. Execute SQL for PostgREST roles and permissions
+kubectl exec -it -n api-auth $PG_POD -- psql -U postgres -d api_db -c "
+-- PostgREST Authenticator Role with password
+CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD '$(kubectl get secret postgres-credentials -n api-auth -o jsonpath='{.data.PG_PASS_AUTH}' | base64 -d)';
+
+-- User Roles
+CREATE ROLE web_anon NOLOGIN;
+CREATE ROLE inventory_user NOLOGIN;
+
+-- Grant impersonation rights to the authenticator
+GRANT web_anon TO authenticator;
+GRANT inventory_user TO authenticator;
+
+-- Anonymous (read-only) permissions
+GRANT USAGE ON SCHEMA public TO web_anon;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO web_anon;
+
+-- Authenticated (CRUD) permissions
+GRANT ALL ON ALL TABLES IN SCHEMA public TO inventory_user;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO inventory_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO inventory_user;
+
+#later I created a initial  TABLES
+-- Create the table (using the modern IDENTITY method)
+CREATE TABLE public.products (
+    product_id bigint NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    product_name text NOT NULL,
+    price numeric NOT NULL DEFAULT 0,
+    description text
+);
+
+-- Ensure the public role (and thus all user roles) can see it
+GRANT SELECT ON public.products TO web_anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.products TO inventory_user;
+"
+```
+
+To revoke access for anonymous users from viewing a table, run the following command(did this):
+
+```bash
+REVOKE SELECT ON public.products FROM web_anon;
+``` 
+
+We have now deployed Keycloak and exposed it via an Ingress. In this example, the URL is `https://oauth.muntashirislam.com`. Note: In a production setup, Keycloak should be exposed as a ClusterIP service instead of using an external Ingress. Next, follow these steps to configure the Keycloak service from the Keycloak console:
+
+- Navigate to https://auth.muntashirislam.com/admin.
+
+- Create Realm (e.g., my-postgrest-realm).
+
+- Create Client (Client ID: postgrest_api, Client authentication: on).
+
+- Credentials Tab: Note the Client Secret.
+
+- Roles Tab: Create Realm Roles: web_user, inventory_user.
+
+- Client Scopes: Ensure your roles are mapped to the access token under the JSON path: .resource_access.postgrest_api.roles.
+
+- Map user (muntashir/admin321) with the role
+
+Now we also need JWKS endpoint for the authentication
+
+```bash
+curl -sS https://oauth.muntashirislam.com/realms/my-postgrest-realm/protocol/openid-connect/certs > keycloak-jwks.json
+cat keycloak-jwks.json | base64
+
+```
+Finally, encode the secret as Base64 and add it to your deployment under the environment variable PGRST_JWT_SECRET. Be sure to include any other required environment variables as well.
+```yaml
+- name: PGRST_JWT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: postgrest-secret-vault
+      key: jwt-secret
+- name: PGRST_JWT_ROLE_CLAIM_KEY # Keycloak role path
+value: ".resource_access.postgrest_api.roles[0]"
+- name: PGRST_DB_AUTHENTICATOR_ROLE
+  value: "authenticator"
+- name: PGRST_DB_ANON_ROLE
+  value: "web_anon"
+- name: PGRST_DB_SCHEMAS
+  value: "public" 
+```
+now we can get the token from keycloak
+```bash
+ACCESS_TOKEN=$(
+  curl -s --location 'https://oauth.muntashirislam.com/realms/my-postgrest-realm/protocol/openid-connect/token' \
+    --header 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode 'client_id=postgrest_api' \
+    --data-urlencode 'username=muntashir' \
+    --data-urlencode 'password=admin321' \
+    --data-urlencode 'grant_type=password' \
+    --data-urlencode 'client_secret=W043cYReKtTVMeBkLl6KAYZFX4cEcTlS' \
+    | jq -r '.access_token'
+)
+
+echo "Extracted Token: $ACCESS_TOKEN"
+```
+You can now perform CRUD operations on the API.
+
+```bash
+curl -i -X POST 'https://postgrest-api.muntashirislam.com/products' \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '[{"product_name": "Test Product2", "price": 200, "description": "Auth Test 2"}]'
+
+HTTP/2 201 
+date: Sun, 12 Oct 2025 01:52:07 GMT
+content-length: 0
+content-range: */*
+strict-transport-security: max-age=31536000; includeSubDomains
+``` 
+However, if you want to perform this operation without using a Keycloak token, follow these steps:
+
+```bash
+❯ curl -i -X POST 'https://postgrest-api.muntashirislam.com/products' \
+  -H "Content-Type: application/json" \
+  -d '[{"product_name": "Test Product3", "price": 300, "description": "Auth Test 3"}]'
+
+HTTP/2 401 
+date: Sun, 12 Oct 2025 01:53:40 GMT
+content-type: application/json; charset=utf-8
+content-length: 92
+proxy-status: PostgREST; error=42501
+www-authenticate: Bearer
+strict-transport-security: max-age=31536000; includeSubDomains
+
+{"code":"42501","details":null,"hint":null,"message":"permission denied for table products"}%  
+```
+This setup will work once the PostgREST API is deployed and running.
 ## Installing ARGO cd and Deploy Postgrest-api
-To install argocd following steps are taken
+The following steps are used to install ArgoCD:
 ```yaml
 kubectl create namespace argocd
 kubectl apply -n argocd -f argocd/install.yaml
 ```
-To access the ArgoCD UI, you need to forward the ArgoCD server port:
+To access the ArgoCD UI, forward the ArgoCD server port using the following command:
 
 ```bash
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
-The default username is admin, and to retrieve the password, use:
+The default username is admin. Retrieve the initial password with:
 ```bash
 kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath={.data.password} | base64 -d
 ```
 
-Then we connect our git repo from the setting and create a argocd application for postgrest-api application
+Next, connect your Git repository via the ArgoCD settings and create an ArgoCD application for the postgrest-api service.
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -543,11 +694,10 @@ spec:
     automated:
       selfHeal: true
 ```
-here in deployments/postgrest-api we have postgrest deployment manifest managed by kustomize. This one is very simple one but in multi environment setup we keep these values into overlays and the provide patch from other environment folder like test, stage, production
+In deployments/postgrest-api, we have the PostgREST deployment manifest managed using Kustomize. This example is simple, but in a multi-environment setup, we store environment-specific values in overlays and apply patches from folders such as test, stage, or production.
+<img width="1619" height="929" alt="image" src="https://github.com/user-attachments/assets/b85e8704-74cb-4aee-be15-3011a60cd40e" />
 
 ```yaml
-namePrefix: kustomize-
-
 resources:
 - deployment.yaml
 - service.yaml
@@ -555,7 +705,7 @@ resources:
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 ```
-for deployment we use vault generated secrets. Please check vault integration on the later part of the README. 
+Here is the postgrest-api deployment
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -606,7 +756,7 @@ spec:
           - name: PGRST_DB_SCHEMAS
             value: "public" 
 ```
-For ensuring high availability, we also use so that pod can span multiple az's node
+To ensure high availability, we configure the deployment so that pods can be scheduled across nodes in multiple Availability Zones (AZs).
 ```yaml
       affinity:
         podAntiAffinity:
@@ -616,12 +766,14 @@ For ensuring high availability, we also use so that pod can span multiple az's n
                   app: postgrest
               topologyKey: "kubernetes.io/hostname"
 ```
-antiAffinity pattern so the pod replica can span over all the nodes avaiable in cluster. For cost issue (keep node number limited otherwise karpenter create new nodes) we using `"kubernetes.io/hostname"` but in production environment we need to use `topologyKey: "topology.kubernetes.io/zone"` to ensure all pods are deployed multi az. For now all our node deployed in 2 azs so ensure HA and fault tolerence.
+We use an anti-affinity pattern to ensure that pod replicas are distributed across all available nodes in the cluster. For cost considerations (to limit the number of nodes and avoid unnecessary Karpenter node provisioning), we currently use: `kubernetes.io/hostname`. In a production environment, it’s recommended to use: `topologyKey: "topology.kubernetes.io/zone"`
+
+This ensures that pods are deployed across multiple Availability Zones (AZs), providing true high availability and fault tolerance. In our current setup, all nodes are deployed across 2 AZs, which satisfies basic HA and fault-tolerance requirements.
 
 ### Creating ingress and routing internet 
 
-We also install ingress resource which bound with nginx-ingress controller
-here is ingress resource mapping
+We also deploy an Ingress resource, which is associated with the NGINX Ingress Controller. Below is the mapping for the Ingress resource:
+
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -654,152 +806,6 @@ spec:
     secretName: letsencrypt-postgrest-tls
 ```
 
-## Integrate JWT token based authentication for Postgrest API
-
-Ensure that postgresSQL pod is `running`. In our case api-auth namespace has a postgresSQL db is running.
-```yaml
-kubectl get pods -n api-auth
-
-NAME                             READY   STATUS    RESTARTS   AGE
-postgres-6748f9856c-pnz8r        1/1     Running   0          118m
-```
-Then we need to run following script to run to prepare necessary roles for JWT
-
-```bash
-# 1. Get the Pod name
-PG_POD=$(kubectl get pods -n api-auth -l app=postgres -o jsonpath='{.items[0].metadata.name}')
-
-# 2. Execute SQL for PostgREST roles and permissions
-kubectl exec -it -n api-auth $PG_POD -- psql -U postgres -d api_db -c "
--- PostgREST Authenticator Role with password
-CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD '$(kubectl get secret postgres-credentials -n api-auth -o jsonpath='{.data.PG_PASS_AUTH}' | base64 -d)';
-
--- User Roles
-CREATE ROLE web_anon NOLOGIN;
-CREATE ROLE inventory_user NOLOGIN;
-
--- Grant impersonation rights to the authenticator
-GRANT web_anon TO authenticator;
-GRANT inventory_user TO authenticator;
-
--- Anonymous (read-only) permissions
-GRANT USAGE ON SCHEMA public TO web_anon;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO web_anon;
-
--- Authenticated (CRUD) permissions
-GRANT ALL ON ALL TABLES IN SCHEMA public TO inventory_user;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO inventory_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO inventory_user;
-
-#later I created a initial  TABLES
--- Create the table (using the modern IDENTITY method)
-CREATE TABLE public.products (
-    product_id bigint NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    product_name text NOT NULL,
-    price numeric NOT NULL DEFAULT 0,
-    description text
-);
-
--- Ensure the public role (and thus all user roles) can see it
-GRANT SELECT ON public.products TO web_anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.products TO inventory_user;
-"
-```
-
-If we want to revoke access for anynomous user from viewing table we need to run this
-```bash
-REVOKE SELECT ON public.products FROM web_anon;
-``` 
-
-Now we deployed keycloak and expose url using ingress here in our case it is https: auth.muntashirislam.com. But in production setup we need to keep this into clusterIP service. 
-Now we need to do following steps to configure keycloak service from keycloak console.
-
-- Navigate to https://auth.muntashirislam.com/admin.
-
-- Create Realm (e.g., my-postgrest-realm).
-
-- Create Client (Client ID: postgrest_api, Client authentication: on).
-
-- Credentials Tab: Note the Client Secret.
-
-- Roles Tab: Create Realm Roles: web_user, inventory_user.
-
-- Client Scopes: Ensure your roles are mapped to the access token under the JSON path: .resource_access.postgrest_api.roles.
-
-- Map user (muntashir/admin) with the role
-
-Now we also need JWKS endpoint for the authentication
-
-```bash
-curl -sS https://auth.muntashirislam.com/realms/my-postgrest-realm/protocol/openid-connect/certs > keycloak-jwks.json
-cat keycloak-jwks.json | base64
-
-```
-Finally we put this base64 data into the deployment under the env variable `PGRST_JWT_SECRET` and also include other env variables here
-```yaml
-- name: PGRST_JWT_SECRET
-  valueFrom:
-    secretKeyRef:
-      name: postgrest-secret-vault
-      key: jwt-secret
-- name: PGRST_JWT_ROLE_CLAIM_KEY # Keycloak role path
-value: ".resource_access.postgrest_api.roles[0]"
-- name: PGRST_DB_AUTHENTICATOR_ROLE
-  value: "authenticator"
-- name: PGRST_DB_ANON_ROLE
-  value: "web_anon"
-- name: PGRST_DB_SCHEMAS
-  value: "public" 
-```
-
-
-
-now we can get the token from keycloak
-```bash
-ACCESS_TOKEN=$(
-  curl -s --location 'https://oauth.muntashirislam.com/realms/my-postgrest-realm/protocol/openid-connect/token' \
-    --header 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode 'client_id=postgrest-api' \
-    --data-urlencode 'username=muntashir' \
-    --data-urlencode 'password=admin321' \
-    --data-urlencode 'grant_type=password' \
-    --data-urlencode 'client_secret=<client-secret>' \
-    | jq -r '.access_token'
-)
-
-echo "Extracted Token: $ACCESS_TOKEN"
-```
-Then you can call CURD operation on api
-
-```bash
-curl -i -X POST 'https://postgrest-api.muntashirislam.com/products' \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '[{"product_name": "Test Product2", "price": 200, "description": "Auth Test 2"}]'
-
-HTTP/2 201 
-date: Sun, 12 Oct 2025 01:52:07 GMT
-content-length: 0
-content-range: */*
-strict-transport-security: max-age=31536000; includeSubDomains
-``` 
-But If we want to do this operation without token from keycloak
-
-```bash
-❯ curl -i -X POST 'https://postgrest-api.muntashirislam.com/products' \
-  -H "Content-Type: application/json" \
-  -d '[{"product_name": "Test Product3", "price": 300, "description": "Auth Test 3"}]'
-
-HTTP/2 401 
-date: Sun, 12 Oct 2025 01:53:40 GMT
-content-type: application/json; charset=utf-8
-content-length: 92
-proxy-status: PostgREST; error=42501
-www-authenticate: Bearer
-strict-transport-security: max-age=31536000; includeSubDomains
-
-{"code":"42501","details":null,"hint":null,"message":"permission denied for table products"}%  
-```
 
 
 
