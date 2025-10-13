@@ -1,0 +1,51 @@
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: vault-auth
+  namespace: api-auth
+spec:
+  method: kubernetes
+  mount: kubernetes
+  kubernetes:
+    role: vso-role
+    serviceAccount: vault-secrets-operator
+  vaultConnectionRef: vault-connection
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultConnection
+metadata:
+  name: vault-connection
+  namespace: api-auth
+spec:
+  address: "http://vault.vault.svc:8200"
+  skipTLSVerify: true
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  name: postgrest-secret
+  namespace: api-auth
+spec:
+  vaultAuthRef: vault-auth
+  mount: secret
+  type: kv-v2
+  path: postgres
+  refreshAfter: 60s
+  destination:
+    create: true
+    name: postgres-secret-vault
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  name: postgrest-api-secret
+  namespace: api-auth
+spec:
+  vaultAuthRef: vault-auth   # VaultAuth must exist in vault-system
+  mount: secret
+  type: kv-v2
+  path: apiauth
+  refreshAfter: 60s
+  destination:
+    create: true
+    name: postgrest-api-secret-vault

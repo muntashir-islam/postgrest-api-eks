@@ -31,12 +31,12 @@ spec:
           - name: PGRST_DB_URI
             valueFrom:
               secretKeyRef:
-                name: postgrest-secret-vault
+                name: postgrest-api-secret-vault
                 key: db-uri
           - name: PGRST_JWT_SECRET
             valueFrom:
               secretKeyRef:
-                name: postgrest-secret-vault
+                name: postgrest-api-secret-vault
                 key: jwt-secret
           - name: PGRST_JWT_ROLE_CLAIM_KEY # Keycloak role path from the article
             value: ".resource_access.postgrest_api.roles[0]"

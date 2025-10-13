@@ -28,7 +28,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: auth.muntashirislam.com
+    - host: oauth.muntashirislam.com
       http:
         paths:
           - path: /
@@ -40,5 +40,5 @@ spec:
                   number: 8080
   tls:
     - hosts:
-        - auth.muntashirislam.com
+        - oauth.muntashirislam.com
       secretName: keycloak-tls
