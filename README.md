@@ -119,7 +119,56 @@ strict-transport-security: max-age=31536000; includeSubDomains
 ## Overall Cluster preparation Procedure
 
 Navigate to the iac directory and run `terraform apply`. This command will create all required resources and deploy the necessary Helm charts for components such as the CSI driver, LoadBalancer, Node Identity, Karpenter, and others. The cluster is initially set up using the AWS VPC-CNI, which can later be replaced with a different CNI plugin if needed.
-
+Next, apply the Karpenter NodePool configuration.
+```yaml
+---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  amiSelectorTerms:
+    - alias: bottlerocket@latest
+  role: k8s-test
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: k8s-test
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: k8s-test
+  tags:
+    karpenter.sh/discovery: k8s-test
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot", "on-demand"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["m5.large"]
+  limits:
+    cpu: 1000
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+```
 ### Installing Cilium CNI
 For installing cilium cni we do following steps
 1. **Update Terraform Addons** 
