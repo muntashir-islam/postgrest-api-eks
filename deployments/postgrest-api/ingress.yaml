@@ -25,13 +25,12 @@ metadata:
     nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/allow-headers: "true"
-    # nginx.ingress.kubernetes.io/proxy-ssl-verify: "false"
-    # nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+
     
 spec:
   ingressClassName: nginx
   rules:
-    - host: api.muntashirislam.com
+    - host: postgrest-api.muntashirislam.com
       http:
           paths:
           - path: /
@@ -43,9 +42,5 @@ spec:
                   number: 80
   tls:
   - hosts:
-    -  api.muntashirislam.com
+    -  postgrest-api.muntashirislam.com
     secretName: letsencrypt-postgrest-tls
-# status:
-#   loadBalancer:
-#     ingress:
-#     - ip: a57354ae823464e5ab24d11a41d60b2f-d0669dd39f00107d.elb.us-east-1.amazonaws.com
