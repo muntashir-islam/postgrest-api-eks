@@ -1,35 +1,3 @@
-# apiVersion: v1
-# kind: ConfigMap
-# metadata:
-#   name: filebeat-config
-#   namespace: log
-# data:
-#   filebeat.yml: |
-#     filebeat.inputs:
-#       - type: container
-#         paths:
-#           - /var/log/containers/*.log
-#         json.message_key: log
-#         json.keys_under_root: true
-#         multiline.pattern: '^[[:space:]]'
-#         multiline.negate: false
-#         multiline.match: after
-#     processors:
-#     - add_kubernetes_metadata:
-#         in_cluster: true
-#     - drop_event:
-#           when:
-#             or:
-#               - contains:
-#                   kubernetes.namespace: "ingress-nginx"
-#               - contains:
-#                   kubernetes.namespace: "kube-system"
-#               - contains:
-#                   kubernetes.namespace: "log"
-#               - contains:
-#                   kubernetes.namespace: "monitoring"
-#     output.elasticsearch:
-#       hosts: ["elasticsearch:9200"]
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -38,25 +6,18 @@ metadata:
 data:
   filebeat.yml: |
     filebeat.inputs:
-      - type: container
-        paths:
-          - /var/log/containers/*.log
-        json.message_key: log
-        json.keys_under_root: true
-        multiline.pattern: '^[[:space:]]'
-        multiline.negate: false
-        multiline.match: after
-
-    processors:
-      - add_kubernetes_metadata:
-          in_cluster: true
-      # Drop everything NOT from api-auth
-      - drop_event:
-          when:
-            not:
-              equals:
-                kubernetes.namespace: "api-auth"
-
+    - type: container
+      paths:
+        - /var/log/containers/*.log
+      multiline.pattern: '^[[:space:]]'
+      multiline.negate: false
+      multiline.match: after
+      processors:
+        - add_kubernetes_metadata:
+            host: ${NODE_NAME}
+            matchers:
+            - logs_path:
+                logs_path: "/var/log/containers/"
     output.elasticsearch:
       hosts: ["elasticsearch:9200"]
 ---
@@ -79,6 +40,11 @@ spec:
       - name: filebeat
         image: docker.elastic.co/beats/filebeat:7.17.16
         args: ["-e", "-strict.perms=false"]
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
         volumeMounts:
         - name: config
           mountPath: /usr/share/filebeat/filebeat.yml
