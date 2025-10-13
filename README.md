@@ -858,6 +858,28 @@ spec:
     -  postgrest-api.muntashirislam.com
     secretName: letsencrypt-postgrest-tls
 ```
+A simple HPA also added in the deployment
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: postgrest-api-hpa
+  namespace: api-auth 
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: postgrest-api
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+```
 ## Monitoring and Logging
 
 For monitoring, we will deploy the Prometheus and Grafana stack using Helm charts.
