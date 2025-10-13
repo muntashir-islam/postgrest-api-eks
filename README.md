@@ -164,7 +164,7 @@ spec:
           operator: In
           values: ["m5.large"]
   limits:
-    cpu: 1000
+    cpu: 20
   disruption:
     consolidationPolicy: WhenEmpty
     consolidateAfter: 30s
