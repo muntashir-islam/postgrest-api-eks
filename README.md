@@ -409,6 +409,9 @@ Next, we will add secrets to Vault. Follow these steps:
 
 3. Add keys `db-uri` and `jwt-secret` with their respective values.(This will be used later deploying `Postgrest-API` application)
 
+
+<img width="1171" height="432" alt="image" src="https://github.com/user-attachments/assets/d077931e-fb6e-4d83-a5e0-28c59f4807dc" />
+<img width="1171" height="432" alt="image" src="https://github.com/user-attachments/assets/a333b834-9bb8-448c-b730-6b86b5fd3ce7" />
 4. Create a VaultAuth and SecretSync Custom Resource Definition (CRD) to enable Kubernetes access to these secrets.
 
 ```yaml
