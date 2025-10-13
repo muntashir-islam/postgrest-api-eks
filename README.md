@@ -116,6 +116,7 @@ strict-transport-security: max-age=31536000; includeSubDomains
  {"product_id":4,"product_name":"Wireless Mouse","price":49.50,"description":"Ergonomic gaming mouse, RGB lighting."}, 
  {"product_id":5,"product_name":"4K Monitor","price":499.00,"description":"27-inch 4K monitor with 144Hz refresh rate."}]   
 ```
+If you want to test kaycloak then url is `https://oauth.muntashirislam.com/` password: `admin/admin321$`
 ## Overall Cluster preparation Procedure
 
 Navigate to the iac directory and run `terraform apply`. This command will create all required resources and deploy the necessary Helm charts for components such as the CSI driver, LoadBalancer, Node Identity, Karpenter, and others. The cluster is initially set up using the AWS VPC-CNI, which can later be replaced with a different CNI plugin if needed.
@@ -688,6 +689,9 @@ date: Sun, 12 Oct 2025 01:52:07 GMT
 content-length: 0
 content-range: */*
 strict-transport-security: max-age=31536000; includeSubDomains
+
+#Another Example
+curl -i -X POST 'https://postgrest-api.muntashirislam.com/products' -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -H "Prefer: return=representation" -d '[{"product_name":"Premium Keyboard","price":129.99,"description":"Mechanical keyboard with brown switches."},{"product_name":"Wireless Mouse","price":49.50,"description":"Ergonomic gaming mouse, RGB lighting."},{"product_name":"4K Monitor","price":499.00,"description":"27-inch 4K monitor with 144Hz refresh rate."}]'
 ``` 
 However, if you want to perform this operation without using a Keycloak token, follow these steps:
 
