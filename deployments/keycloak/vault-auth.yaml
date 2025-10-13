@@ -1,0 +1,36 @@
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: vault-auth
+  namespace: keycloak
+spec:
+  method: kubernetes
+  mount: kubernetes
+  kubernetes:
+    role: vso-role
+    serviceAccount: vault-secrets-operator
+  vaultConnectionRef: vault-connection
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultConnection
+metadata:
+  name: vault-connection
+  namespace: keycloak
+spec:
+  address: "http://vault.vault.svc:8200"
+  skipTLSVerify: true
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  name: keycloak-secret
+  namespace: keycloak
+spec:
+  vaultAuthRef: vault-auth
+  mount: secret
+  type: kv-v2
+  path: idp
+  refreshAfter: 60s
+  destination:
+    create: true
+    name: kaycloak-secret-vault
