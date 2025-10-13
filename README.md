@@ -491,10 +491,21 @@ Type:  Opaque
 Data
 ====
 _raw:        3289 bytes
-db_url:      63 bytes
+db-uri:      63 bytes
 jwt-secret:  2981 bytes
 
 ```
+We will use this secret later during api deployment 
+## Deploying Keycloak in keycloak namespace
+We will now deploy Keycloak using the manifests available in `deployments/keycloak`. This includes deploying both the PostgreSQL database and the Keycloak application itself.
+```bash
+kubectl apply -f deployments/kaycloak/postgres.yaml
+kubectl apply -f deployments/kaycloak/keycloak.yaml
+```
+Here
+1. Secrets are managed by vault
+2. Keycloak is exposed on `https://oauth.muntashirislam.com`
+
 
 ## Installing ARGO cd and Deploy Postgrest-api
 To install argocd following steps are taken
