@@ -296,7 +296,7 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO inventory_user;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO inventory_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO inventory_user;
 
-#later I identify these to create a initial  TABLES
+#later I created a initial  TABLES
 -- Create the table (using the modern IDENTITY method)
 CREATE TABLE public.products (
     product_id bigint NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -362,13 +362,13 @@ value: ".resource_access.postgrest_api.roles[0]"
 now we can get the token from keycloak
 ```bash
 ACCESS_TOKEN=$(
-  curl -s --location 'https://auth.muntashirislam.com/realms/my-postgrest-realm/protocol/openid-connect/token' \
+  curl -s --location 'https://oauth.muntashirislam.com/realms/my-postgrest-realm/protocol/openid-connect/token' \
     --header 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode 'client_id=postgrest_api' \
+    --data-urlencode 'client_id=postgrest-api' \
     --data-urlencode 'username=muntashir' \
-    --data-urlencode 'password=admin' \
+    --data-urlencode 'password=admin321' \
     --data-urlencode 'grant_type=password' \
-    --data-urlencode 'client_secret=<Client Secret>' \
+    --data-urlencode 'client_secret=<client-secret>' \
     | jq -r '.access_token'
 )
 
@@ -377,7 +377,7 @@ echo "Extracted Token: $ACCESS_TOKEN"
 Then you can call CURD operation on api
 
 ```bash
-curl -i -X POST 'https://api.muntashirislam.com/products' \
+curl -i -X POST 'https://postgrest-api.muntashirislam.com/products' \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '[{"product_name": "Test Product2", "price": 200, "description": "Auth Test 2"}]'
@@ -391,7 +391,7 @@ strict-transport-security: max-age=31536000; includeSubDomains
 But If we want to do this operation without token from keycloak
 
 ```bash
-❯ curl -i -X POST 'https://api.muntashirislam.com/products' \
+❯ curl -i -X POST 'https://postgrest-api.muntashirislam.com/products' \
   -H "Content-Type: application/json" \
   -d '[{"product_name": "Test Product3", "price": 300, "description": "Auth Test 3"}]'
 
