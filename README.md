@@ -17,7 +17,7 @@ This repository demonstrates a robust, cost-optimized, and secure **Kubernetes a
 * **Authentication & Authorization:**
     * **Authentication (AuthN):** Handled externally by **Keycloak** (OIDC), issuing digitally signed JWTs.
     * **Authorization (AuthZ):** Enforced by **PostgREST** and PostgreSQL's powerful **Role-Level Security (RLS)** based on claims extracted from the JWT.
-* **Secret Management:** All sensitive configuration—including the DB URI, Keycloak JWKS endpoint, and credentials—is managed by **HashiCorp Vault** using the **Vault Agent Injector** for secure, dynamic secret delivery.
+* **Secret Management:** All sensitive configuration—including the DB URI, Keycloak JWKS endpoint, and credentials—is managed by **HashiCorp Vault** using the **Vault Secret Operator** for secure, dynamic secret delivery.
 * **TLS/SSL:** **Cert-Manager** automatically provisions and manages TLS certificates for all exposed application endpoints.
 
 ### Observability
