@@ -39,7 +39,7 @@ The architecture creates a secure data API by separating **Authentication** (han
 | :--- | :--- | :--- |
 | **API Gateway** | **NGINX Ingress** | Routes traffic (`postgrest-api.muntashirislam.com`) and enforces **Authentication** using the external JWT Validator pattern. |
 | **Identity Provider** | **Keycloak** (`oauth.muntashirislam.com`) | Issues signed **JWTs (RS256)** via the Password Grant flow. Provides the public key via the **JWKS endpoint** for validation. |
-| **Secret Management** | **HashiCorp Vault** | Securely stores and injects sensitive configuration (DB connection string, JWKS URL) into the PostgREST Pod using the **Vault Agent Sidecar Injector**. |
+| **Secret Management** | **HashiCorp Vault** | Securely stores and injects sensitive configuration (DB connection string, JWKS URL) into the PostgREST Pod using the **Vault Secret Operator**. |
 | **API Backend** | **PostgREST** | Validates the JWT, extracts the **`role` claim**, and executes requests by impersonating a secure PostgreSQL role. |
 | **Data Layer** | **PostgreSQL** | Enforces all **Authorization** rules via role permissions and **Row-Level Security (RLS)**. |
 
@@ -69,7 +69,7 @@ Authorization is managed by three PostgreSQL roles:
 ### 3. Secret Management (Vault)
 * Utilizing vault secret operator(vso)
 * **Secrets Path:** `secret/apiauth`
-* **K8s Role:** `vso-role` (Bound to the `default` Service Account in the `api-auth` namespace).
+* **K8s Role:** `vso-role` (Bound to the `vault-secrets-operator` Service Account in the `api-auth` namespace).
 * **Injection:** The **Vault VaultStaticSecret CRD** fetches necessary secrets and exposes them as secrets variables mounted as env inside the DB and PostgREST application container.
 
 ***
