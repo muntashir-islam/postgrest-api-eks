@@ -7,7 +7,7 @@ This repository demonstrates a robust, cost-optimized, and secure **Kubernetes a
 * **Platform:** Deployed on **AWS EKS** with workloads running exclusively within **Private Subnets** for enhanced security.
 * **Cluster Autoscaling:** We leverage **Karpenter** for dynamic and efficient scaling, utilizing a dedicated pool of **`m5.large`** instances (Spot and On-Demand) to optimize cost and resource provisioning speed.
 * **Networking (Ingress):** Traffic enters via a dedicated **AWS Network Load Balancer (NLB)** in a public subnet, which routes to the internal **NGINX Ingress Controller**.
-* **Cluster Security (Cilium):** **Cilium** is implemented with **WireGuard** enabled, providing secure, encrypted communication (encryption in transit) across all nodes in the cluster.
+* **Cluster CNI and Network Security (Cilium):** **Cilium** is implemented with **WireGuard** enabled, providing secure, encrypted communication (encryption in transit) across all nodes in the cluster.
 
 ### Application & Security Layer
 
