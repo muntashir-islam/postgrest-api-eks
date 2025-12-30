@@ -593,8 +593,12 @@ service/app-postgres-r    ClusterIP   10.96.215.37    <none>        5432/TCP   7
 service/app-postgres-ro   ClusterIP   10.96.253.235   <none>        5432/TCP   73s
 service/app-postgres-rw   ClusterIP   10.96.121.151   <none>        5432/TCP   73s
 ```
-
+Use rw svc for application config and update vault secrets that way. For example
+```bash
+postgres://app_user:your_password@app-postgres-rw.pg.svc.cluster.local:5432/app_db
+```
 Next, run the following script to create the necessary roles for JWT authentication. 
+
 If you use multi node pg then 
 ```bash
 kubectl port-forward -n pg svc/app-postgres-rw 5432:5432
