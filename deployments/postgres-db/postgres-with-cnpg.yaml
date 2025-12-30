@@ -1,0 +1,32 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: app-postgres
+  namespace: api-auth
+spec:
+  instances: 2
+
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.1
+
+  superuserSecret:
+    name: pg-superuser
+
+  enableSuperuserAccess: true
+
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: 256MB
+      effective_cache_size: 768MB
+
+  bootstrap:
+    initdb:
+      database: app_db
+      owner: app_user
+      secret:
+        name: pg-app-user
+      postInitApplicationSQL:
+        - CREATE SCHEMA IF NOT EXISTS app;
+
+  storage:
+    size: 5Gi

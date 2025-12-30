@@ -574,7 +574,34 @@ kubectl get pods -n api-auth
 NAME                             READY   STATUS    RESTARTS   AGE
 postgres-6748f9856c-pnz8r        1/1     Running   0          118m
 ```
-Next, run the following script to create the necessary roles for JWT authentication.
+If you want PostgreSQL need to be HA with number of relica then use CNPG operator here instead of single instance setup
+
+```bash
+kubectl apply --server-side -f \
+  https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.28/releases/cnpg-1.28.0.yaml
+```
+Then apply the postgres-with-cnpg.yaml file
+
+```bash
+kubectl get all -n api-auth 
+NAME                 READY   STATUS    RESTARTS   AGE
+pod/app-postgres-1   1/1     Running   0          47s
+pod/app-postgres-2   1/1     Running   0          28s
+
+NAME                      TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+service/app-postgres-r    ClusterIP   10.96.215.37    <none>        5432/TCP   73s
+service/app-postgres-ro   ClusterIP   10.96.253.235   <none>        5432/TCP   73s
+service/app-postgres-rw   ClusterIP   10.96.121.151   <none>        5432/TCP   73s
+```
+
+Next, run the following script to create the necessary roles for JWT authentication. 
+If you use multi node pg then 
+```bash
+kubectl port-forward -n pg svc/app-postgres-rw 5432:5432
+psql -h localhost -U app_user -d app_db
+```
+
+if it is single node pg then do following
 ```bash
 # 1. Get the Pod name
 PG_POD=$(kubectl get pods -n api-auth -l app=postgres -o jsonpath='{.items[0].metadata.name}')
