@@ -13,7 +13,7 @@ This repository demonstrates a robust, cost-optimized, and secure **Kubernetes a
 
 * **API Service (PostgREST):** The data API is powered by **PostgREST**, providing CRUD endpoints directly from the PostgreSQL database structure.
 * **High Availability:** The **PostgREST API deployment** is configured with **Pod Anti-Affinity** across multiple Availability Zones (AZs) and nodes, ensuring the service remains available during node failures.
-* **Database:** A single-replica **PostgreSQL** database is deployed within Kubernetes to minimize infrastructure costs while providing necessary persistence.
+* **Database:** A multi-replica **PostgreSQL** database is deployed within Kubernetes using CNPG operator to minimize infrastructure costs while providing necessary persistence.
 * **Authentication & Authorization:**
     * **Authentication (AuthN):** Handled externally by **Keycloak** (OIDC), issuing digitally signed JWTs.
     * **Authorization (AuthZ):** Enforced by **PostgREST** and PostgreSQL's powerful **Role-Level Security (RLS)** based on claims extracted from the JWT.
